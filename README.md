@@ -12,7 +12,7 @@ Each experiment in this lab follows a standardized high-value format:
 - **Why it happens**: The technical root cause.
 - **Symptoms in Production**: What you'll see in **pprof**, goroutine dumps, and why **Autoscaling** might fail to save you.
 - **What actually leaked?**: A checklist of exhausted resources (Goroutines, TCP connections, DB slots).
-- **How to detect**: Using tools like `goleak`, pprof, or custom metrics.
+- **How to detect**: Using tools like `goleak`, pprof, or custom metrics. (Note: We are keeping an eye on the upcoming `GOEXPERIMENT=goroutineleakprofile` feature in Go 1.26 for future inclusion).
 - **How to fix**: The "Production-Grade" solution.
 - **Related concepts**: Links to further reading.
 
