@@ -16,7 +16,12 @@ func TestOrderHandler_LeakDetection(t *testing.T) {
 	service := &OrderService{
 		shipments: make(chan string),
 	}
-	// We don't start the worker, simulating the crash
+	// We actually call StartWorker(), but it will exit silently 
+	// because connectToShippingProvider() fails.
+	service.StartWorker()
+
+	// Give the worker a moment to "crash"
+	time.Sleep(50 * time.Millisecond)
 
 	req := httptest.NewRequest("GET", "/order?id=LEAK-TEST", nil)
 	w := httptest.NewRecorder()

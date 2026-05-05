@@ -1,4 +1,4 @@
-.PHONY: run run-solution reproduce test-solution clean
+.PHONY: run run-solution reproduce test-solution clean test test-leak test-solution-leak
 
 # Run the broken version
 run:
@@ -29,10 +29,16 @@ test-solution:
 	@echo "\n\n[RESULT] Success. Server responded with an error instead of hanging."
 	@$(MAKE) clean
 
-# Run unit tests (including leak detection)
-test:
-	@echo "--- RUNNING LEAK DETECTION TEST ---"
+# Run leak detection on both versions
+test: test-leak test-solution-leak
+
+test-leak:
+	@echo "--- RUNNING LEAK DETECTION ON BROKEN VERSION ---"
 	@go test -v main_test.go main.go || echo "\n[RESULT] Test failed as expected because a leak was detected!"
+
+test-solution-leak:
+	@echo "\n--- RUNNING LEAK DETECTION ON FIXED VERSION ---"
+	@go test -v solution/main_test.go solution/main.go && echo "\n[RESULT] Test passed! No leaks detected in the solution."
 
 # Utility to kill the server running on port 8080
 clean:
