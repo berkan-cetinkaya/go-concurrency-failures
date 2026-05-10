@@ -52,8 +52,9 @@ func TestOrderHandler_TableDriven_LeakDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Now each sub-test will fail individually if it leaks
-			defer goleak.VerifyNone(t)
+			// The broken scenarios intentionally leave goroutines behind. Capture
+			// the baseline so previous subtests do not hide the current leak.
+			defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 			fmt.Printf("%s[RUNNING]%s %s\n", colorBlue, colorReset, tt.name)
 
