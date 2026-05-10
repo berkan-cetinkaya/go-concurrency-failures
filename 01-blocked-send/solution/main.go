@@ -5,26 +5,60 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
-type OrderService struct {
-	shipments chan string
+// ShippingProvider defines the contract for external shipping services.
+// This allows us to mock the provider in tests without changing the business logic.
+type ShippingProvider interface {
+	Connect() error
 }
 
-func (s *OrderService) StartWorker() {
+// RealShippingProvider is the production implementation that talks to the network.
+type RealShippingProvider struct {
+	URL string
+}
+
+func (p *RealShippingProvider) Connect() error {
+	client := http.Client{Timeout: 1 * time.Second}
+	_, err := client.Get(p.URL)
+	if err != nil {
+		return fmt.Errorf("shipping provider unreachable on %s", p.URL)
+	}
+	return nil
+}
+
+type OrderService struct {
+	shipments chan string
+	provider  ShippingProvider
+}
+
+func (s *OrderService) StartWorker(ctx context.Context) {
 	go func() {
 		fmt.Println("Worker: starting...")
 
-		if err := connectToShippingProvider(); err != nil {
+		if err := s.provider.Connect(); err != nil {
 			fmt.Printf("Worker: failed to connect to shipping provider: %v\n", err)
 			return
 		}
 
 		fmt.Println("Worker: connected to shipping provider.")
-
-		for orderID := range s.shipments {
-			fmt.Printf("Worker: creating shipment for order %s\n", orderID)
+		for {
+			select {
+			case <-ctx.Done():
+				fmt.Println("Worker: stopping due to context cancellation...")
+				return
+			case orderID, ok := <-s.shipments:
+				if !ok {
+					fmt.Println("Worker: channel closed, exiting...")
+					return
+				}
+				fmt.Printf("Worker: creating shipment for order %s\n", orderID)
+				time.Sleep(100 * time.Millisecond)
+			}
 		}
 	}()
 }
@@ -37,38 +71,57 @@ func (s *OrderService) OrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Printf("Handler: received order %s\n", orderID)
-	fmt.Println("Handler: sending order to shipment worker...")
 
-	// FIXED: Using context with timeout to prevent blocking forever.
-	// We use the request context but wrap it with a specific timeout for the handoff.
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
 
+	fmt.Printf("Handler: sending order to shipment worker...\n")
 	select {
 	case s.shipments <- orderID:
 		fmt.Fprintf(w, "Order %s accepted\n", orderID)
 	case <-ctx.Done():
-		// If the worker is dead or busy, we reach here after 500ms.
 		fmt.Printf("Handler: failed to send order %s: %v\n", orderID, ctx.Err())
 		http.Error(w, "Service Unavailable: background worker not responding", http.StatusServiceUnavailable)
 	}
 }
 
-func connectToShippingProvider() error {
-	return fmt.Errorf("connection refused")
-}
-
 func main() {
+	// Production uses the real provider
+	provider := &RealShippingProvider{URL: "http://localhost:9999/health"}
+
 	service := &OrderService{
-		shipments: make(chan string), // unbuffered channel
+		shipments: make(chan string),
+		provider:  provider,
 	}
 
-	service.StartWorker()
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
 
-	http.HandleFunc("/order", service.OrderHandler)
+	service.StartWorker(workerCtx)
 
-	fmt.Println("Server (FIXED) listening on http://localhost:8080")
-	fmt.Println("Try: curl 'http://localhost:8080/order?id=ORD-001'")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/order", service.OrderHandler)
+	server := &http.Server{Addr: ":8080", Handler: mux}
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	go func() {
+		fmt.Println("Server (FIXED) listening on http://localhost:8080")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+	
+	fmt.Println("\nShutdown signal received...")
+	workerCancel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	fmt.Println("Server exiting gracefully.")
 }
